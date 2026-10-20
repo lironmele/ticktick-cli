@@ -811,7 +811,7 @@ fn run() -> Result<()> {
             .downcast_ref::<String>()
             .map(String::as_str)
             .unwrap_or("");
-        if msg.contains("Broken pipe") {
+        if msg.contains("failed printing to stdout") {
             std::process::exit(0);
         }
         default_hook(info);
