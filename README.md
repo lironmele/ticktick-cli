@@ -1,272 +1,133 @@
 # ticktick-cli
 
-[中文](#中文) | [English](#english)
+A command-line interface to the **local database of the TickTick desktop app**, with full read **and write** support.
+It needs no login and no network, so it also works with an offline or airgapped install. It is built to be driven
+by scripts and AI agents (`--json` everywhere, dry runs, safe defaults).
 
-## 中文
+This is a fork of [Lyt99/ticktick-cli](https://github.com/Lyt99/ticktick-cli), which was read-only. Every write here
+mirrors what TickTick for Windows 8.2.1.5 does in its own code (`TaskService`, `SyncStatusDao`, `ProjectDao`, …), so
+after a restart the app shows CLI changes exactly as if they had been made in the app.
 
-滴答清单（TickTick）本地数据库 CLI 工具 - 只读版本。
+## Features
 
-直接从本地 SQLite 数据库读取滴答清单数据，无需登录，无网络依赖。
+| Area | Commands |
+| --- | --- |
+| Tasks & notes | `list` (rich filters), `show`, `add`, `edit`, `complete`, `wontdo`, `reopen`, `delete`, `restore`, `move`, `duplicate` |
+| Dates | all-day or timed, spans, durations, reminders, repeat rules (RRULE or `daily`, `every 2 weeks`, `every mon,fri`…), repeat from due or completion date |
+| Repeating tasks | completing closes one occurrence (a completed copy is kept) and moves the task to its next date, like the app |
+| Subtasks | `--parent`, `--no-parent`; completing a parent completes its subtasks, reopening a subtask reopens its parents |
+| Checklists | `items list/add/check/uncheck/edit/delete/promote`, progress kept in sync |
+| Projects | `list/show/add/edit/archive/unarchive/delete`, colours, list/kanban/timeline view, note lists |
+| Folders | `folders list/add/rename/delete` |
+| Kanban sections | `sections list/add/rename/delete`, `tasks edit --column` |
+| Tags | `list/add/rename/merge/edit/delete`, nested tags; renaming rewrites every task |
+| Habits | `list/show/add/edit/archive/delete`, `checkin` (yes/no and count habits), `fail`, `reset`, `note` |
+| Focus | `pomos list` (records / daily summary), `pomos add`, `pomos delete` |
+| Overview | `agenda`, `search`, `info`, `export` (everything as one JSON document), `comments`, `filters` |
+| Low level | `sql` (read-only unless `--write`), `schema`, `backup` |
+| App control | `app status/stop/start/restart`, or `--restart-app` on any write |
 
-### 功能特性
+## Install
 
-- **列出项目** - 查看所有滴答清单项目
-- **列出任务** - 支持按项目/标签筛选
-- **查看任务** - 显示任务详情
-- **列出标签** - 查看所有标签
-- **番茄钟记录** - 查看专注记录，支持按日期/任务/项目筛选和按天汇总
-
-### 数据库位置
-
-默认读取以下路径的数据库文件：
-
-| 平台    | 路径                                                  |
-| ------- | ----------------------------------------------------- |
-| Windows | `%APPDATA%\Tick_Tick\TickTick.db`                     |
-| macOS   | `~/Library/Application Support/Tick_Tick/TickTick.db` |
-| Linux   | `~/.local/share/Tick_Tick/TickTick.db`                |
-
-### 安装
-
-#### 从源码编译
-
-```bash
-cargo build --release
-```
-
-编译产物位于 `target/release/ticktick-cli`（或 `ticktick-cli.exe`）
-
-#### 下载预编译二进制
-
-从 [Releases](https://github.com/Lyt99/ticktick-cli/releases) 页面下载对应平台的二进制文件。
-
-### 使用方法
-
-命令格式：`ticktick-cli <noun> <verb>`
-
-#### 项目 (projects)
+Download a binary from the releases page, or build from source (Rust 1.85+):
 
 ```bash
-# 列出所有项目
-ticktick-cli projects list
+cargo build --release                                          # native
+cargo build --release --target x86_64-pc-windows-gnu           # Windows exe from Linux (needs mingw-w64)
 ```
 
-#### 任务 (tasks)
+To carry it into an airgapped network, build or download it outside and copy the single executable in. It has no runtime
+dependencies, because SQLite is compiled in.
+
+## Database location
+
+`--db <path>`, else `$TICKTICK_DB`, else:
+
+| Platform | Path |
+| --- | --- |
+| Windows | `%APPDATA%\Tick_Tick\TickTick.db` |
+| macOS | `~/Library/Application Support/Tick_Tick/TickTick.db` |
+| Linux | `~/.local/share/Tick_Tick/TickTick.db` |
+
+## Writing safely
+
+TickTick loads every task into memory at startup and writes whole rows back from that cache. Because of this:
+
+* **Writes are refused while the app is running.** Close it with `ticktick-cli app stop`, or add `--restart-app` to the
+  write. That closes the app, writes, and starts it again so the change is visible straight away.
+  `--allow-running` overrides the check, but the app will not show the change until it restarts and may overwrite it.
+* Before the first write of each day, the database is backed up to `TickTick.db.cli-backup-YYYYMMDD` next to it.
+  `ticktick-cli backup` makes a backup on demand.
+* Every command runs in one transaction. `--dry-run` runs it and rolls it back.
+* Changes are queued for sync (`SyncStatusModel`, `sync_status`) the same way the app queues its own edits, so a copy
+  that does reach TickTick's servers later uploads them normally.
+
+`app start` finds `TickTick.exe` in the usual install folders. Otherwise use `--exe <path>` or set `$TICKTICK_EXE`.
+On Linux it runs the exe through `wine`.
+
+## Usage
 
 ```bash
-# 列出所有待办任务
-ticktick-cli tasks list
+ticktick-cli agenda                                  # overdue + next 7 days
+ticktick-cli tasks list --due today
+ticktick-cli tasks list -p Work -t urgent --priority medium --sort date
+ticktick-cli tasks list --status completed --completed-from 2026-10-01
+ticktick-cli tasks show 42                           # id, sid, sid prefix, or exact title
 
-# 列出所有任务（含已完成和已取消）
-ticktick-cli tasks list --show-all
+ticktick-cli --restart-app tasks add "Write report" -p Work --priority high -t work,urgent \
+    -d "tomorrow 14:00" --duration 1h -r -15m -c "Q3 numbers"
+ticktick-cli tasks add "Trip" -d 2026-11-02 --end 2026-11-05 -r "-1d@9:00"
+ticktick-cli tasks add "Water plants" -d today --repeat "every 3 days"
+ticktick-cli tasks add "Packing" -i socks -i passport
+ticktick-cli tasks add "Sub step" --parent "Write report"
 
-# 按项目筛选
-ticktick-cli tasks list --project inbox    # 收集箱
-ticktick-cli tasks list --project 4        # 项目ID
+ticktick-cli tasks edit 42 --date "fri 10:00" --add-tag waiting --append "called Bob"
+ticktick-cli tasks complete 42 43
+ticktick-cli tasks move 42 -p Home
+ticktick-cli tasks delete 42            # trash; --forever to delete
+ticktick-cli items check Packing 1 passport --complete-task
 
-# 按标签筛选
-ticktick-cli tasks list --tags work
+ticktick-cli projects add Home --folder Life --color "#35D870"
+ticktick-cli tags rename old new
+ticktick-cli habits checkin Meditate
+ticktick-cli habits checkin Water --value 2
+ticktick-cli pomos add --start "today 9:00" --duration 25m -t 42
 
-# 查看任务详情
-ticktick-cli tasks show 10
+ticktick-cli --json tasks list | jq '.[].title'
+ticktick-cli sql "SELECT title, startDate FROM TaskModel WHERE status = 0 LIMIT 5"
 ```
 
-#### 标签 (tags)
+Run `ticktick-cli <command> --help` for every option.
+
+### Date input
+
+`today`, `tomorrow`, `yesterday`, weekday names (`fri`, `next monday`), `YYYY-MM-DD`, offsets (`+3d`, `-1w`, `+2h`,
+`+30m`), each optionally followed by a time (`tomorrow 9:30`, `fri 5pm`, `2026-11-01 14:00`). A date with no time
+makes an all-day task.
+
+### Reminders
+
+`0` (on time), `-5m`, `-1h`, `-1d`, `-1h30m` before the start; for all-day tasks `9:00` (on the day) or `-1d@9:00`
+(the day before). Raw iCalendar values (`TRIGGER:-PT15M`) also work.
+
+### Values
+
+| | Stored | CLI |
+| --- | --- | --- |
+| Status | 0 / 2 / -1 | open / completed / wontdo |
+| Priority | 0 / 1 / 3 / 5 | none / low / medium / high |
+
+(The upstream tool showed priority 3 as "High". TickTick's high priority is 5.)
+
+## For agents
+
+See [AGENTS.md](AGENTS.md) for a usage guide aimed at AI agents and for how the writes are modelled.
+
+## Development
 
 ```bash
-# 列出所有标签
-ticktick-cli tags list
+cargo test   # unit tests + end-to-end tests against an empty 8.2.1.5 profile (tests/fixtures/schema.sql)
 ```
-
-#### 番茄钟 (pomos)
-
-```bash
-# 查看最近番茄钟记录
-ticktick-cli pomos list
-
-# 查看指定日期的记录
-ticktick-cli pomos list --date 2026-05-07
-
-# 按日期范围查看
-ticktick-cli pomos list --from 2026-05-01 --to 2026-05-07
-
-# 按天汇总
-ticktick-cli pomos list --from 2026-05-01 --to 2026-05-07 --summary
-
-# 按任务或项目筛选
-ticktick-cli pomos list --task 10
-ticktick-cli pomos list --project inbox
-
-# 限制显示条数
-ticktick-cli pomos list --limit 20
-```
-
-#### 全局选项
-
-```bash
-# 指定数据库路径
-ticktick-cli --db /path/to/TickTick.db tasks list
-```
-
-### 任务状态说明
-
-| 状态      | 符号  | 说明   |
-| --------- | ----- | ------ |
-| Pending   | `[ ]` | 未完成 |
-| Completed | `[x]` | 已完成 |
-| Cancelled | `[-]` | 已取消 |
-
-### 任务优先级
-
-| 优先级 | 符号 |
-| ------ | ---- |
-| 高     | 🔴   |
-| 中     | 🟡   |
-| 低     | 🟢   |
-| 无     | ⚪   |
-
-### 构建要求
-
-- Rust 1.75+
-
-### 免责声明
-
-本工具为只读工具，不会修改任何数据。使用前请自行备份数据库。
-
----
-
-## English
-
-TickTick CLI - A read-only CLI tool for accessing your local TickTick database.
-
-Directly reads TickTick data from your local SQLite database. No login required, no network dependency.
-
-### Features
-
-- **List Projects** - View all TickTick projects
-- **List Tasks** - Filter by project/tags
-- **Show Task** - Display task details
-- **List Tags** - View all tags
-- **Pomodoro Records** - View focus records with date/task/project filters and daily summaries
-
-### Database Location
-
-Default database paths by platform:
-
-| Platform | Path                                                  |
-| -------- | ----------------------------------------------------- |
-| Windows  | `%APPDATA%\Tick_Tick\TickTick.db`                     |
-| macOS    | `~/Library/Application Support/Tick_Tick/TickTick.db` |
-| Linux    | `~/.local/share/Tick_Tick/TickTick.db`                |
-
-### Installation
-
-#### Build from source
-
-```bash
-cargo build --release
-```
-
-Binary will be at `target/release/ticktick-cli` (or `ticktick-cli.exe`)
-
-#### Download prebuilt binary
-
-Get the binary for your platform from the [Releases](https://github.com/Lyt99/ticktick-cli/releases) page.
-
-### Usage
-
-Command format: `ticktick-cli <noun> <verb>`
-
-#### Projects
-
-```bash
-# List all projects
-ticktick-cli projects list
-```
-
-#### Tasks
-
-```bash
-# List pending tasks
-ticktick-cli tasks list
-
-# List all tasks (including completed and cancelled)
-ticktick-cli tasks list --show-all
-
-# Filter by project
-ticktick-cli tasks list --project inbox
-ticktick-cli tasks list --project 4
-
-# Filter by tags
-ticktick-cli tasks list --tags work
-
-# Show task details
-ticktick-cli tasks show 10
-```
-
-#### Tags
-
-```bash
-# List all tags
-ticktick-cli tags list
-```
-
-#### Pomodoro
-
-```bash
-# Show recent pomodoro records
-ticktick-cli pomos list
-
-# Show records on a specific date
-ticktick-cli pomos list --date 2026-05-07
-
-# Show records in a date range
-ticktick-cli pomos list --from 2026-05-01 --to 2026-05-07
-
-# Show daily totals
-ticktick-cli pomos list --from 2026-05-01 --to 2026-05-07 --summary
-
-# Filter by task or project
-ticktick-cli pomos list --task 10
-ticktick-cli pomos list --project inbox
-
-# Limit number of rows
-ticktick-cli pomos list --limit 20
-```
-
-#### Global Options
-
-```bash
-# Specify database path
-ticktick-cli --db /path/to/TickTick.db tasks list
-```
-
-### Task Status Legend
-
-| Status    | Symbol | Description |
-| --------- | ------ | ----------- |
-| Pending   | `[ ]`  | Incomplete  |
-| Completed | `[x]`  | Done        |
-| Cancelled | `[-]`  | Cancelled   |
-
-### Task Priority Legend
-
-| Priority | Symbol |
-| -------- | ------ |
-| High     | 🔴     |
-| Medium   | 🟡     |
-| Low      | 🟢     |
-| None     | ⚪      |
-
-### Build Requirements
-
-- Rust 1.75+
-
-### Disclaimer
-
-This tool is read-only and will not modify any data. Please backup your database before use.
-
----
 
 ## License
 

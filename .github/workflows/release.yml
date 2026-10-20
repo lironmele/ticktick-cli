@@ -43,7 +43,7 @@ jobs:
       - name: Prepare artifact
         shell: bash
         run: |
-          cp target/release/ticktick-cli{{ matrix.ext }} ${{ matrix.artifact }}
+          cp target/release/ticktick-cli${{ matrix.ext }} ${{ matrix.artifact }}
           if [ "${{ matrix.os }}" != "windows-latest" ]; then
             chmod +x ${{ matrix.artifact }}
           fi
