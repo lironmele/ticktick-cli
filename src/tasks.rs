@@ -96,6 +96,7 @@ pub struct ListArgs {
     /// Include archived projects
     #[arg(long)]
     pub include_archived: bool,
+    /// Sort order
     #[arg(long, value_enum, default_value = "order")]
     pub sort: SortBy,
     /// Reverse sort
@@ -999,6 +1000,7 @@ pub fn add_inner(ctx: &mut Ctx, a: &AddArgs) -> Result<String> {
 pub struct EditArgs {
     /// Task id, sid, or exact title
     pub task: String,
+    /// New title
     #[arg(long)]
     pub title: Option<String>,
     /// Replace the description
@@ -1007,6 +1009,7 @@ pub struct EditArgs {
     /// Append a line to the description
     #[arg(long)]
     pub append: Option<String>,
+    /// Priority: none, low, medium, high
     #[arg(long)]
     pub priority: Option<String>,
     /// Replace all tags (comma-separated; empty string clears)
@@ -1027,10 +1030,13 @@ pub struct EditArgs {
         allow_hyphen_values = true
     )]
     pub date: Option<String>,
+    /// New end of the span (inclusive day for all-day tasks); keeps --date
     #[arg(long, allow_hyphen_values = true)]
     pub end: Option<String>,
+    /// New length instead of --end, e.g. 30m, 1h30m
     #[arg(long)]
     pub duration: Option<String>,
+    /// Make the task all-day (true) or timed (false)
     #[arg(long)]
     pub all_day: Option<bool>,
     /// Remove date, end, reminders and repeat
@@ -1039,12 +1045,16 @@ pub struct EditArgs {
     /// Replace reminders (repeatable)
     #[arg(short, long, allow_hyphen_values = true)]
     pub reminder: Vec<String>,
+    /// Remove all reminders
     #[arg(long)]
     pub clear_reminders: bool,
+    /// Repeat: daily, weekly, monthly, yearly, weekdays, "every 2 weeks", "every mon,fri", or RRULE
     #[arg(long)]
     pub repeat: Option<String>,
+    /// Repeat from the due date or the completion date
     #[arg(long, value_enum)]
     pub repeat_from: Option<RepeatFrom>,
+    /// Stop repeating
     #[arg(long)]
     pub clear_repeat: bool,
     /// Move to another project
@@ -1059,8 +1069,10 @@ pub struct EditArgs {
     /// Kanban section
     #[arg(long)]
     pub column: Option<String>,
+    /// Pin the task
     #[arg(long, conflicts_with = "unpin")]
     pub pin: bool,
+    /// Unpin the task
     #[arg(long)]
     pub unpin: bool,
     /// Change kind: task, note, checklist

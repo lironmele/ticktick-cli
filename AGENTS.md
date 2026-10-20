@@ -2,29 +2,16 @@
 
 ## Using ticktick-cli as an agent
 
-* Always pass `--json`. Successful commands print one JSON value (an object or array). Failed commands exit with a
-  non-zero code and print `{"error": "..."}`.
-* Refer to tasks by the numeric `id` or the 24-char `sid` from earlier output. Titles work only while they are
-  unambiguous, and the CLI refuses ambiguous titles rather than guessing.
-* Start with `ticktick-cli --json info` (user, inbox, time zone, whether the app is running), then
-  `agenda`, `projects list`, `tags list`, or `export` to load context.
-* To write while the user has TickTick open, add `--restart-app`. Without it, writes fail while the app runs (see
-  "Why the app must be closed").
-* Use `--dry-run` to validate a change first. It runs everything in a transaction and rolls it back.
-* Prefer the dedicated commands over `sql --write`. They keep sort orders, sync markers, checklist progress, parent
-  and child links, and tag rows consistent. Raw SQL does none of that.
+The binary documents itself; nothing else is needed at runtime:
 
-Common recipes:
+* `ticktick-cli guide`: rules for writing, id formats, date/reminder/repeat syntax, every JSON output shape,
+  recipes and limits (source: `src/guide.md`, compiled in).
+* `ticktick-cli --json commands`: every command, alias, argument, type, default and allowed value,
+  generated from the parser.
+* `ticktick-cli <command> --help`: the same per command.
 
-```bash
-ticktick-cli --json agenda --days 3
-ticktick-cli --json tasks list --due overdue
-ticktick-cli --json tasks list -p "Work" --status all --modified-since "-7d"   # changed in the last week
-ticktick-cli --json search "invoice"
-ticktick-cli --json --restart-app tasks add "Call Bob" -d "tomorrow 10:00" -r -15m -p Work
-ticktick-cli --json --restart-app tasks complete 42
-ticktick-cli --json --restart-app tasks edit 42 --date "+2d" --priority high
-```
+Tests fail if an argument lacks help text or a JSON key the CLI emits is missing from the guide, so keep
+`src/guide.md` updated when changing output.
 
 ## Why the app must be closed
 

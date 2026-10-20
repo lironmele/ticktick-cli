@@ -562,3 +562,122 @@ fn backup_command_and_daily_backup() {
         .count();
     assert_eq!(backups, 1);
 }
+
+/// The binary must describe itself: every JSON key it emits is documented in `guide`,
+/// and `commands --json` lists every command with typed arguments.
+#[test]
+fn self_describing() {
+    let db = Db::new("selfdoc");
+    let guide = db.json(&["guide"])["guide"].as_str().unwrap().to_string();
+    let mut objects: Vec<(&str, Value)> = Vec::new();
+    db.json(&["projects", "add", "P", "--view", "kanban"]);
+    let t = db.json(&[
+        "tasks", "add", "T", "-p", "P", "-i", "x", "-d", "today", "-t", "tg", "-r", "0",
+    ]);
+    objects.push(("full task", t.clone()));
+    objects.push(("checklist item", t["items"][0].clone()));
+    objects.push(("subtask", {
+        db.json(&["tasks", "add", "S", "--parent", "T"]);
+        db.json(&["tasks", "show", "T"])["subtasks"][0].clone()
+    }));
+    objects.push(("task", db.json(&["tasks", "list"])[0].clone()));
+    objects.push(("project", db.json(&["projects", "show", "P"])));
+    objects.push((
+        "section",
+        db.json(&["projects", "show", "P"])["sections"][0].clone(),
+    ));
+    objects.push(("tag", db.json(&["tags", "list"])[0].clone()));
+    db.json(&["folders", "add", "F"]);
+    objects.push(("folder", db.json(&["folders", "list"])[0].clone()));
+    objects.push((
+        "section list",
+        db.json(&["sections", "list", "P"])[0].clone(),
+    ));
+    db.json(&["habits", "add", "H"]);
+    let h = db.json(&["habits", "list"])[0].clone();
+    objects.push(("habit recent", h["recent"][0].clone()));
+    objects.push(("habit", h));
+    db.json(&["pomos", "add", "--start", "today 9:00", "-t", "T"]);
+    objects.push(("pomo", db.json(&["pomos", "list"])[0].clone()));
+    objects.push((
+        "pomo summary",
+        db.json(&["pomos", "list", "--summary"])[0].clone(),
+    ));
+    objects.push(("agenda", db.json(&["agenda"])));
+    objects.push(("info", db.json(&["info"])));
+    let st = db.json(&["tasks", "complete", "T"]);
+    objects.push(("status change", st[0].clone()));
+    let mut missing = Vec::new();
+    for (what, v) in &objects {
+        for k in v
+            .as_object()
+            .unwrap_or_else(|| panic!("{what} is not an object"))
+            .keys()
+        {
+            if !guide.contains(k.as_str()) {
+                missing.push(format!("{what}.{k}"));
+            }
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "keys missing from guide.md: {missing:?}"
+    );
+
+    let tree = db.json(&["commands"]);
+    fn walk(v: &Value, path: String, out: &mut Vec<String>) {
+        for s in v["subcommands"].as_array().into_iter().flatten() {
+            let p = format!("{path} {}", s["name"].as_str().unwrap());
+            out.push(p.trim().to_string());
+            walk(s, p, out);
+        }
+    }
+    let mut paths = Vec::new();
+    walk(&tree, String::new(), &mut paths);
+    for p in [
+        "tasks add",
+        "tasks complete",
+        "items check",
+        "habits checkin",
+        "app restart",
+        "guide",
+        "commands",
+    ] {
+        assert!(paths.iter().any(|x| x == p), "commands --json lacks {p}");
+    }
+    let tasks = tree["subcommands"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["name"] == "tasks")
+        .unwrap();
+    let add = tasks["subcommands"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["name"] == "add")
+        .unwrap();
+    let date = add["args"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["name"] == "date")
+        .unwrap();
+    assert_eq!(date["takes_value"], true);
+    assert_eq!(date["short"], "-d");
+    let rem = add["args"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["name"] == "reminder")
+        .unwrap();
+    assert_eq!(rem["multiple"], true);
+    let globals: Vec<&str> = tree["args"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|a| a["global"] == true)
+        .map(|a| a["name"].as_str().unwrap())
+        .collect();
+    assert!(globals.contains(&"json") && globals.contains(&"restart_app"));
+}

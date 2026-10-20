@@ -25,6 +25,7 @@ after a restart the app shows CLI changes exactly as if they had been made in th
 | Focus | `pomos list` (records / daily summary), `pomos add`, `pomos delete` |
 | Overview | `agenda`, `search`, `info`, `export` (everything as one JSON document), `comments`, `filters` |
 | Low level | `sql` (read-only unless `--write`), `schema`, `backup` |
+| Self-description | `guide` (agent manual), `commands` (command tree, `--json` for machines) |
 | App control | `app status/stop/start/restart`, or `--restart-app` on any write |
 
 ## Install
@@ -121,7 +122,9 @@ makes an all-day task.
 
 ## For agents
 
-See [AGENTS.md](AGENTS.md) for a usage guide aimed at AI agents and for how the writes are modelled.
+The binary is self-describing: `ticktick-cli guide` prints the full agent manual (rules, id formats, input
+syntax, JSON output shapes, recipes), and `ticktick-cli --json commands` prints the complete command tree with
+argument types, defaults and allowed values. [AGENTS.md](AGENTS.md) explains how the writes are modelled.
 
 ## Development
 

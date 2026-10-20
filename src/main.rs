@@ -21,7 +21,9 @@ use ctx::{Ctx, OpenOptions};
 #[command(name = "ticktick-cli", version)]
 #[command(about = "Read and edit the TickTick desktop app's local database")]
 #[command(
-    after_help = "Writes require the TickTick app to be closed (see `app stop`). \
+    after_help = "AI agents: run `ticktick-cli guide` for the full manual and \
+`ticktick-cli commands --json` for the machine-readable command tree.\n\
+Writes require the TickTick app to be closed (see `app stop`). \
 A backup of the database is taken once per day before the first write.\n\
 Ids: tasks accept the numeric ID shown in lists, the 24-char sid, a sid prefix, or an exact title. \
 Projects accept a name, ID, sid, or \"inbox\"."
@@ -123,10 +125,12 @@ enum Commands {
     },
     /// Search tasks by text (title, description, checklist)
     Search {
+        /// Text to search for
         query: String,
         /// Include completed and won't-do tasks
         #[arg(short = 'a', long)]
         all: bool,
+        /// Maximum rows
         #[arg(short, long, default_value_t = 50)]
         limit: usize,
     },
@@ -139,23 +143,37 @@ enum Commands {
         all: bool,
     },
     /// Comments on a task (read-only)
-    Comments { task: String },
+    Comments {
+        /// Task: numeric id, 24-char sid, sid prefix (6+ hex chars), or exact title
+        task: String,
+    },
     /// Saved smart-list filters (read-only)
     Filters,
     /// Run raw SQL (read-only unless --write)
     Sql {
+        /// One SQL statement (several allowed with --write)
         query: String,
+        /// Allow statements that change data (the app must be closed)
         #[arg(long)]
         write: bool,
     },
     /// Show tables, or one table's definition
-    Schema { table: Option<String> },
+    Schema {
+        /// Table name (omit to list all tables)
+        table: Option<String>,
+    },
     /// Copy the database to a backup file
     Backup {
         /// Destination (default: next to the DB with a timestamp)
         #[arg(short, long)]
         out: Option<String>,
     },
+    /// Full usage guide for agents: rules, id formats, date syntax, JSON shapes, recipes
+    #[command(alias = "agent-help", alias = "docs")]
+    Guide,
+    /// Every command, flag, type, default and allowed value (use --json for machine-readable output)
+    #[command(name = "commands")]
+    CommandList,
     /// Control the TickTick desktop app
     App {
         #[command(subcommand)]
@@ -171,7 +189,10 @@ enum TaskAction {
     List(tasks::ListArgs),
     /// Show one task with checklist, reminders and subtasks
     #[command(alias = "get")]
-    Show { task: String },
+    Show {
+        /// Task: numeric id, 24-char sid, sid prefix (6+ hex chars), or exact title
+        task: String,
+    },
     /// Create a task
     #[command(alias = "create", alias = "new")]
     Add(tasks::AddArgs),
@@ -181,6 +202,7 @@ enum TaskAction {
     /// Complete tasks (a repeating task advances to its next date)
     #[command(alias = "done", alias = "check")]
     Complete {
+        /// Tasks: numeric ids, sids, sid prefixes, or exact titles
         #[arg(required = true)]
         tasks: Vec<String>,
         /// For repeating tasks: complete the whole series instead of one occurrence
@@ -193,20 +215,24 @@ enum TaskAction {
     /// Mark tasks as won't do
     #[command(alias = "abandon", alias = "wont-do")]
     Wontdo {
+        /// Tasks: numeric ids, sids, sid prefixes, or exact titles
         #[arg(required = true)]
         tasks: Vec<String>,
+        /// For repeating tasks: close the whole series instead of one occurrence
         #[arg(long)]
         whole_series: bool,
     },
     /// Reopen completed / won't-do tasks
     #[command(alias = "uncomplete", alias = "undo")]
     Reopen {
+        /// Tasks: numeric ids, sids, sid prefixes, or exact titles
         #[arg(required = true)]
         tasks: Vec<String>,
     },
     /// Move tasks (and subtasks) to the trash
     #[command(alias = "rm", alias = "trash")]
     Delete {
+        /// Tasks: numeric ids, sids, sid prefixes, or exact titles
         #[arg(required = true)]
         tasks: Vec<String>,
         /// Delete permanently instead of trashing
@@ -215,30 +241,41 @@ enum TaskAction {
     },
     /// Restore tasks from the trash
     Restore {
+        /// Tasks: numeric ids, sids, sid prefixes, or exact titles
         #[arg(required = true)]
         tasks: Vec<String>,
     },
     /// Move tasks to another project
     #[command(alias = "mv")]
     Move {
+        /// Tasks: numeric ids, sids, sid prefixes, or exact titles
         #[arg(required = true)]
         tasks: Vec<String>,
+        /// Destination project: name, id, sid, or "inbox"
         #[arg(short, long)]
         project: String,
     },
     /// Copy a task with its checklist and reminders
     #[command(alias = "copy")]
-    Duplicate { task: String },
+    Duplicate {
+        /// Task: numeric id, 24-char sid, sid prefix (6+ hex chars), or exact title
+        task: String,
+    },
 }
 
 #[derive(Subcommand)]
 enum ItemAction {
     /// List a task's checklist
     #[command(alias = "ls")]
-    List { task: String },
+    List {
+        /// Task: numeric id, 24-char sid, sid prefix (6+ hex chars), or exact title
+        task: String,
+    },
     /// Add checklist items
     Add {
+        /// Task: numeric id, 24-char sid, sid prefix (6+ hex chars), or exact title
         task: String,
+        /// Item titles (one argument per item)
         #[arg(required = true)]
         titles: Vec<String>,
         /// Insert before this 1-based position instead of appending
@@ -248,7 +285,9 @@ enum ItemAction {
     /// Check items (by 1-based position, sid, or title)
     #[command(alias = "complete", alias = "done")]
     Check {
+        /// Task: numeric id, 24-char sid, sid prefix (6+ hex chars), or exact title
         task: String,
+        /// Checklist items: 1-based position in the task, item sid, or (part of) its title
         #[arg(required = true)]
         items: Vec<String>,
         /// Complete the task when every item is checked
@@ -257,30 +296,44 @@ enum ItemAction {
     },
     /// Uncheck items
     Uncheck {
+        /// Task: numeric id, 24-char sid, sid prefix (6+ hex chars), or exact title
         task: String,
+        /// Checklist items: 1-based position in the task, item sid, or (part of) its title
         #[arg(required = true)]
         items: Vec<String>,
     },
     /// Rename or date an item
     Edit {
+        /// Task: numeric id, 24-char sid, sid prefix (6+ hex chars), or exact title
         task: String,
+        /// Checklist item: 1-based position in the task, item sid, or (part of) its title
         item: String,
+        /// New item title
         #[arg(long)]
         title: Option<String>,
+        /// Item date/time (see `guide`)
         #[arg(long, allow_hyphen_values = true)]
         date: Option<String>,
+        /// Remove the item's date
         #[arg(long)]
         clear_date: bool,
     },
     /// Delete items
     #[command(alias = "rm")]
     Delete {
+        /// Task: numeric id, 24-char sid, sid prefix (6+ hex chars), or exact title
         task: String,
+        /// Checklist items: 1-based position in the task, item sid, or (part of) its title
         #[arg(required = true)]
         items: Vec<String>,
     },
     /// Turn an item into a subtask
-    Promote { task: String, item: String },
+    Promote {
+        /// Task: numeric id, 24-char sid, sid prefix (6+ hex chars), or exact title
+        task: String,
+        /// Checklist item: 1-based position in the task, item sid, or (part of) its title
+        item: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -292,22 +345,29 @@ enum ProjectAction {
         #[arg(short, long)]
         all: bool,
     },
+    /// Show one project with its sections
     Show {
+        /// Project: name (case-insensitive, unique prefix ok), numeric id, sid, or "inbox"
         project: String,
     },
     /// Create a project
     #[command(alias = "create")]
     Add {
+        /// Project name
         name: String,
+        /// Hex colour like "#4CA1FF"
         #[arg(long)]
         color: Option<String>,
+        /// Put the project in this folder
         #[arg(long)]
         folder: Option<String>,
         /// A note list instead of a task list
         #[arg(long)]
         note: bool,
+        /// View: list, kanban, timeline
         #[arg(long, value_enum)]
         view: Option<projects::ViewMode>,
+        /// Mute reminders for this project
         #[arg(long)]
         muted: bool,
         /// Hide this project's tasks from the All / Today smart lists
@@ -317,36 +377,49 @@ enum ProjectAction {
     /// Rename or change project settings
     #[command(alias = "rename", alias = "update")]
     Edit {
+        /// Project: name (case-insensitive, unique prefix ok), numeric id, sid, or "inbox"
         project: String,
+        /// New project name
         #[arg(long)]
         name: Option<String>,
         /// Hex color, or "none"
         #[arg(long)]
         color: Option<String>,
+        /// Move the project into this folder
         #[arg(long)]
         folder: Option<String>,
+        /// Take the project out of its folder
         #[arg(long)]
         no_folder: bool,
+        /// View: list, kanban, timeline
         #[arg(long, value_enum)]
         view: Option<projects::ViewMode>,
+        /// Mute reminders for this project
         #[arg(long)]
         muted: Option<bool>,
+        /// Show this project's tasks in the All / Today smart lists
         #[arg(long)]
         show_in_all: Option<bool>,
         /// task or note
         #[arg(long)]
         kind: Option<String>,
     },
+    /// Archive a project (hides it and its tasks)
     Archive {
+        /// Project: name (case-insensitive, unique prefix ok), numeric id, sid, or "inbox"
         project: String,
     },
+    /// Bring back an archived project
     Unarchive {
+        /// Project: name (case-insensitive, unique prefix ok), numeric id, sid, or "inbox"
         project: String,
     },
     /// Delete a project; its tasks go to the trash unless --move-tasks-to is given
     #[command(alias = "rm")]
     Delete {
+        /// Project: name (case-insensitive, unique prefix ok), numeric id, sid, or "inbox"
         project: String,
+        /// Move the project's tasks to this project instead of trashing them
         #[arg(long)]
         move_tasks_to: Option<String>,
     },
@@ -354,42 +427,61 @@ enum ProjectAction {
 
 #[derive(Subcommand)]
 enum FolderAction {
+    /// List folders and their projects
     #[command(alias = "ls")]
     List,
+    /// Create a folder
     Add {
+        /// Folder name
         name: String,
     },
+    /// Rename a folder
     Rename {
+        /// Folder: name, numeric id, or sid
         folder: String,
+        /// New folder name
         name: String,
     },
     /// Delete a folder (its projects are kept, ungrouped)
     #[command(alias = "rm")]
     Delete {
+        /// Folder: name, numeric id, or sid
         folder: String,
     },
 }
 
 #[derive(Subcommand)]
 enum ColumnAction {
+    /// List a kanban project's sections
     #[command(alias = "ls")]
     List {
+        /// Project: name (case-insensitive, unique prefix ok), numeric id, sid, or "inbox"
         project: String,
     },
+    /// Add a section to a kanban project
     Add {
+        /// Project: name (case-insensitive, unique prefix ok), numeric id, sid, or "inbox"
         project: String,
+        /// Section name
         name: String,
     },
+    /// Rename a section
     Rename {
+        /// Project: name (case-insensitive, unique prefix ok), numeric id, sid, or "inbox"
         project: String,
+        /// Section: name, numeric id, or sid
         section: String,
+        /// New section name
         name: String,
     },
     /// Delete a section; its tasks move to --move-to or the first other section
     #[command(alias = "rm")]
     Delete {
+        /// Project: name (case-insensitive, unique prefix ok), numeric id, sid, or "inbox"
         project: String,
+        /// Section: name, numeric id, or sid
         section: String,
+        /// Section that receives the tasks (default: first other section)
         #[arg(long)]
         move_to: Option<String>,
     },
@@ -397,10 +489,14 @@ enum ColumnAction {
 
 #[derive(Subcommand)]
 enum TagAction {
+    /// List tags with open-task counts
     #[command(alias = "ls")]
     List,
+    /// Create a tag
     Add {
+        /// Tag name (display case is kept)
         name: String,
+        /// Hex colour like "#4CA1FF"
         #[arg(long)]
         color: Option<String>,
         /// Nest under this tag
@@ -408,32 +504,53 @@ enum TagAction {
         parent: Option<String>,
     },
     /// Rename a tag everywhere
-    Rename { tag: String, name: String },
-    /// Move all tasks from one tag to another and delete the first
-    Merge { from: String, into: String },
-    Edit {
+    Rename {
+        /// Tag name (with or without #)
         tag: String,
+        /// New tag name
+        name: String,
+    },
+    /// Move all tasks from one tag to another and delete the first
+    Merge {
+        /// Tag to remove (its tasks get the other tag)
+        from: String,
+        /// Tag to keep
+        into: String,
+    },
+    /// Change a tag's colour or parent
+    Edit {
+        /// Tag name (with or without #)
+        tag: String,
+        /// Hex colour like "#4CA1FF"
         #[arg(long)]
         color: Option<String>,
+        /// Nest under this tag
         #[arg(long)]
         parent: Option<String>,
+        /// Make it a top-level tag
         #[arg(long)]
         no_parent: bool,
     },
     /// Delete a tag and remove it from all tasks
     #[command(alias = "rm")]
-    Delete { tag: String },
+    Delete {
+        /// Tag name (with or without #)
+        tag: String,
+    },
 }
 
 #[derive(Subcommand)]
 enum HabitAction {
+    /// List habits with today's state, last 7 days and streak
     #[command(alias = "ls")]
     List {
         /// Include archived habits
         #[arg(short, long)]
         all: bool,
     },
+    /// Show one habit with its check-in history
     Show {
+        /// Habit: name (case-insensitive, unique substring ok), numeric id, or sid
         habit: String,
         /// Days of history
         #[arg(long, default_value_t = 30)]
@@ -442,7 +559,9 @@ enum HabitAction {
     /// Check in (boolean habits) or add to the day's value (count habits)
     #[command(alias = "done", alias = "check")]
     Checkin {
+        /// Habit: name (case-insensitive, unique substring ok), numeric id, or sid
         habit: String,
+        /// Day (default today): YYYY-MM-DD, yesterday, -2d, ...
         #[arg(long, allow_hyphen_values = true)]
         date: Option<String>,
         /// Amount to add (count habits); default completes the goal
@@ -454,25 +573,34 @@ enum HabitAction {
     },
     /// Mark a day as failed
     Fail {
+        /// Habit: name (case-insensitive, unique substring ok), numeric id, or sid
         habit: String,
+        /// Day (default today): YYYY-MM-DD, yesterday, -2d, ...
         #[arg(long, allow_hyphen_values = true)]
         date: Option<String>,
     },
     /// Clear a day's check-in
     #[command(alias = "uncheck")]
     Reset {
+        /// Habit: name (case-insensitive, unique substring ok), numeric id, or sid
         habit: String,
+        /// Day (default today): YYYY-MM-DD, yesterday, -2d, ...
         #[arg(long, allow_hyphen_values = true)]
         date: Option<String>,
     },
     /// Write a note for a habit day
     Note {
+        /// Habit: name (case-insensitive, unique substring ok), numeric id, or sid
         habit: String,
+        /// Note text
         text: String,
+        /// Day (default today): YYYY-MM-DD, yesterday, -2d, ...
         #[arg(long, allow_hyphen_values = true)]
         date: Option<String>,
     },
+    /// Create a habit
     Add {
+        /// Habit name
         name: String,
         /// Daily goal (a goal other than 1 makes a count habit)
         #[arg(long)]
@@ -480,40 +608,56 @@ enum HabitAction {
         /// Amount per quick check-in for count habits
         #[arg(long)]
         step: Option<f64>,
+        /// Unit for count habits, e.g. cups
         #[arg(long)]
         unit: Option<String>,
         /// daily, weekdays, "every mon,wed", RRULE...
         #[arg(long)]
         repeat: Option<String>,
+        /// Hex colour like "#4CA1FF"
         #[arg(long)]
         color: Option<String>,
         /// Reminder time HH:MM (repeatable)
         #[arg(long)]
         reminder: Vec<String>,
+        /// Motivational text shown with the habit
         #[arg(long)]
         encouragement: Option<String>,
     },
+    /// Change a habit
     Edit {
+        /// Habit: name (case-insensitive, unique substring ok), numeric id, or sid
         habit: String,
+        /// New habit name
         #[arg(long)]
         name: Option<String>,
+        /// New daily goal
         #[arg(long)]
         goal: Option<f64>,
+        /// New unit
         #[arg(long)]
         unit: Option<String>,
+        /// Repeat: daily, weekly, monthly, yearly, weekdays, "every 2 weeks", "every mon,fri", or RRULE
         #[arg(long)]
         repeat: Option<String>,
+        /// Motivational text shown with the habit
         #[arg(long)]
         encouragement: Option<String>,
     },
+    /// Archive a habit
     Archive {
+        /// Habit: name (case-insensitive, unique substring ok), numeric id, or sid
         habit: String,
     },
+    /// Restore an archived habit
     Unarchive {
+        /// Habit: name (case-insensitive, unique substring ok), numeric id, or sid
         habit: String,
     },
+    /// Delete a habit and its check-ins
     #[command(alias = "rm")]
     Delete {
+        /// Habit: name (case-insensitive, unique substring ok), numeric id, or sid
         habit: String,
     },
 }
@@ -526,17 +670,22 @@ enum PomoAction {
         /// Only this date
         #[arg(long, allow_hyphen_values = true)]
         date: Option<String>,
+        /// From this date (YYYY-MM-DD, today, -7d, ...)
         #[arg(long)]
         from: Option<String>,
+        /// Through this date
         #[arg(long)]
         to: Option<String>,
+        /// Only records for this task (id, sid, or title)
         #[arg(short, long)]
         task: Option<String>,
+        /// Only records for this project
         #[arg(short, long)]
         project: Option<String>,
         /// Daily totals
         #[arg(short, long)]
         summary: bool,
+        /// Maximum rows
         #[arg(short, long, default_value_t = 50)]
         limit: usize,
     },
@@ -545,31 +694,40 @@ enum PomoAction {
         /// Start time, e.g. "today 9:00"
         #[arg(long)]
         start: String,
+        /// End time (or use --duration)
         #[arg(long)]
         end: Option<String>,
         /// Length, e.g. 25m (default 25m)
         #[arg(long)]
         duration: Option<String>,
+        /// Task the session was for (id, sid, or title)
         #[arg(short, long)]
         task: Option<String>,
         /// Record as stopwatch instead of pomodoro
         #[arg(long)]
         stopwatch: bool,
+        /// Note text
         #[arg(long)]
         note: Option<String>,
     },
     /// Delete a focus record by sid
     #[command(alias = "rm")]
-    Delete { sid: String },
+    Delete {
+        /// Focus record sid (from `pomos list --json`)
+        sid: String,
+    },
 }
 
 #[derive(Subcommand)]
 enum TrashAction {
+    /// List trashed tasks
     #[command(alias = "ls")]
     List,
     /// Permanently delete everything in the trash
     Empty,
+    /// Restore tasks from the trash
     Restore {
+        /// Tasks: numeric ids, sids, sid prefixes, or exact titles
         #[arg(required = true)]
         tasks: Vec<String>,
     },
@@ -665,6 +823,24 @@ fn run() -> Result<()> {
     // Commands that do not need the database.
     match &cli.command {
         Commands::App { action } => return app_cmd(action, cli.json, cli.exe.as_deref()),
+        Commands::Guide => {
+            if cli.json {
+                out::json(&serde_json::json!({ "guide": GUIDE }));
+            } else {
+                print!("{GUIDE}");
+            }
+            return Ok(());
+        }
+        Commands::CommandList => {
+            let mut cmd = <Cli as clap::CommandFactory>::command();
+            cmd.build(); // resolves value counts for introspection
+            if cli.json {
+                out::json(&command_json(&cmd, true));
+            } else {
+                print_tree(&cmd, 0);
+            }
+            return Ok(());
+        }
         Commands::Backup { out } => return misc::backup(&db, out.as_deref(), cli.json),
         _ => {}
     }
@@ -987,7 +1163,88 @@ fn run_db(cli: Cli, db: PathBuf, write: bool) -> Result<()> {
         Commands::Filters => misc::filters(c),
         Commands::Sql { query, write } => misc::sql(c, &query, write),
         Commands::Schema { table } => misc::schema(c, table.as_deref()),
-        Commands::App { .. } | Commands::Backup { .. } => unreachable!(),
+        Commands::App { .. }
+        | Commands::Backup { .. }
+        | Commands::Guide
+        | Commands::CommandList => unreachable!(),
+    }
+}
+
+const GUIDE: &str = include_str!("guide.md");
+
+/// Describe a clap command (and its subcommands) as JSON for `commands --json`.
+fn command_json(cmd: &clap::Command, root: bool) -> serde_json::Value {
+    use serde_json::json;
+    let args: Vec<serde_json::Value> = cmd
+        .get_arguments()
+        .filter(|a| !matches!(a.get_id().as_str(), "help" | "version"))
+        // global args are listed once, on the root
+        .filter(|a| root || !a.is_global_set())
+        .map(|a| {
+            let takes_value = a.is_positional() || a.get_num_args().is_some_and(|n| n.takes_values());
+            let multiple = matches!(a.get_action(), clap::ArgAction::Append)
+                || a.get_num_args().is_some_and(|n| n.max_values() > 1);
+            let aliases: Vec<String> = a
+                .get_all_aliases()
+                .unwrap_or_default()
+                .iter()
+                .map(|x| format!("--{x}"))
+                .collect();
+            json!({
+                "name": a.get_id().as_str(),
+                "positional": a.is_positional(),
+                "long": a.get_long().map(|l| format!("--{l}")),
+                "short": a.get_short().map(|s| format!("-{s}")),
+                "aliases": aliases,
+                "required": a.is_required_set(),
+                "takes_value": takes_value,
+                "multiple": multiple,
+                "possible_values": a.get_possible_values().iter().map(|v| v.get_name().to_string()).collect::<Vec<_>>(),
+                "default": a.get_default_values().first().map(|v| v.to_string_lossy().to_string()),
+                "global": a.is_global_set(),
+                "help": a.get_help().map(|h| h.to_string()),
+            })
+        })
+        .collect();
+    let subs: Vec<serde_json::Value> = cmd
+        .get_subcommands()
+        .filter(|s| s.get_name() != "help")
+        .map(|s| command_json(s, false))
+        .collect();
+    let mut v = json!({
+        "name": cmd.get_name(),
+        "aliases": cmd.get_all_aliases().collect::<Vec<_>>(),
+        "about": cmd.get_about().map(|a| a.to_string()),
+        "args": args,
+    });
+    if !subs.is_empty() {
+        v["subcommands"] = json!(subs);
+    }
+    if root {
+        v["version"] = json!(env!("CARGO_PKG_VERSION"));
+        v["note"] = json!(
+            "Global args (global: true) work with every command. Run `ticktick-cli guide` for semantics, id formats, date syntax and JSON output shapes."
+        );
+    }
+    v
+}
+
+/// One line per command: name, its own flags, and what it does.
+fn print_tree(cmd: &clap::Command, depth: usize) {
+    for s in cmd.get_subcommands().filter(|s| s.get_name() != "help") {
+        let args: Vec<String> = s
+            .get_arguments()
+            .filter(|a| !a.is_global_set() && !matches!(a.get_id().as_str(), "help" | "version"))
+            .map(|a| match (a.is_positional(), a.get_long()) {
+                (true, _) => format!("<{}>", a.get_id()),
+                (false, Some(l)) => format!("--{l}"),
+                _ => a.get_id().to_string(),
+            })
+            .collect();
+        let about = s.get_about().map(|a| a.to_string()).unwrap_or_default();
+        let head = format!("{}{} {}", "  ".repeat(depth), s.get_name(), args.join(" "));
+        println!("{}  # {about}", head.trim_end());
+        print_tree(s, depth + 1);
     }
 }
 
@@ -1052,5 +1309,31 @@ mod tests {
     #[test]
     fn cli_definition_is_valid() {
         Cli::command().debug_assert();
+    }
+
+    /// Agents rely on --help / `commands --json`; every argument must say what it is.
+    #[test]
+    fn every_argument_is_documented() {
+        fn walk(cmd: &clap::Command, path: &str, missing: &mut Vec<String>) {
+            let path = format!("{path} {}", cmd.get_name());
+            if cmd.get_about().is_none() && !path.ends_with(" help") {
+                missing.push(format!("{path} (command)"));
+            }
+            for a in cmd.get_arguments() {
+                let id = a.get_id().as_str();
+                if id == "help" || id == "version" {
+                    continue;
+                }
+                if a.get_help().is_none() {
+                    missing.push(format!("{path} <{id}>"));
+                }
+            }
+            for sc in cmd.get_subcommands() {
+                walk(sc, &path, missing);
+            }
+        }
+        let mut missing = Vec::new();
+        walk(&Cli::command(), "", &mut missing);
+        assert!(missing.is_empty(), "undocumented:\n{}", missing.join("\n"));
     }
 }
